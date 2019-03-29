@@ -85,6 +85,29 @@ steps:
         Group: saturation
         CpuRequest: 1m
         MemoryRequest: 10M
+  # Probes begin here
+- name: "Create probes"
+  phases:
+  - namespaceRange:
+      min: 1
+      max: 1
+    replicasPerNamespace: 1 # We don't support more than 1 replicas!
+    tuningSet: Uniform5qps
+    objectBundle:
+    - basename: ping-server
+      objectTemplatePath: ping-server-deployment.yaml
+      templateFillMap:
+        Replicas: 5 # TODO(mm4tt): This should be based on the # nodes
+    - basename: ping-server
+      objectTemplatePath: ping-server-service.yaml
+    - basename: ping-client
+      objectTemplatePath: ping-client-deployment.yaml
+      templateFillMap:
+        Replicas: 5 # TODO(mm4tt): This should be based on the # nodes
+    - basename: ping-client
+      objectTemplatePath: ping-client-service.yaml
+# Probes end here
+
 - measurements:
   - Identifier: SchedulingThroughput
     Method: SchedulingThroughput
