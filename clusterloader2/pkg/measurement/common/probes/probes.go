@@ -17,21 +17,21 @@ package probes
 
 import (
 	"fmt"
-	"github.com/prometheus/common/model"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/perf-tests/clusterloader2/pkg/errors"
-	"k8s.io/perf-tests/clusterloader2/pkg/prometheus"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/prometheus/common/model"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog"
 	"k8s.io/perf-tests/clusterloader2/pkg/config"
+	"k8s.io/perf-tests/clusterloader2/pkg/errors"
 	"k8s.io/perf-tests/clusterloader2/pkg/framework"
 	"k8s.io/perf-tests/clusterloader2/pkg/framework/client"
 	"k8s.io/perf-tests/clusterloader2/pkg/measurement"
 	measurementutil "k8s.io/perf-tests/clusterloader2/pkg/measurement/util"
+	"k8s.io/perf-tests/clusterloader2/pkg/prometheus"
 	"k8s.io/perf-tests/clusterloader2/pkg/util"
 )
 
@@ -39,7 +39,7 @@ const (
 	name            = "Probes"
 	probesNamespace = "probes"
 
-	manifestGlob = "$GOPATH/src/k8s.io/perf-tests/clusterloader2/pkg/measurements/common/probes/manifests/*.yaml"
+	manifestGlob = "$GOPATH/src/k8s.io/perf-tests/clusterloader2/pkg/measurement/common/probes/manifests/*.yaml"
 
 	checkProbesReadyInterval = 30 * time.Second
 	checkProbesReadyTimeout  = 5 * time.Minute
@@ -194,8 +194,9 @@ func (p *probesMeasurement) gather(params map[string]interface{}) (summary *prob
 }
 
 func (p *probesMeasurement) createProbesObjects() error {
-	templateProvider := config.NewTemplateProvider(filepath.Dir(os.ExpandEnv(manifestGlob)))
-	manifests, err := filepath.Glob(manifestGlob)
+	expandedManifestGlob := os.ExpandEnv(manifestGlob)
+	templateProvider := config.NewTemplateProvider(filepath.Dir(expandedManifestGlob))
+	manifests, err := filepath.Glob(expandedManifestGlob)
 	if err != nil {
 		return err
 	}
@@ -218,7 +219,7 @@ func (p *probesMeasurement) waitTillProbesReady() error {
 }
 
 func (p *probesMeasurement) checkProbesReady() (bool, error) {
-	expectedTargets := p.replicasPerProbe * 2 // ping-server, ping-client
+	expectedTargets := p.replicasPerProbe * 1 // ping-client
 	return prometheus.CheckTargetsReady(
 		p.framework.GetClientSets().GetClient(), isProbeTarget, expectedTargets)
 }
