@@ -134,6 +134,9 @@ func (p *probesMeasurement) Execute(config *measurement.MeasurementConfig) (summ
 func (p *probesMeasurement) Dispose() {
 	klog.Infof("%s: Stopping probes...", p)
 	k8sClient := p.framework.GetClientSets().GetClient()
+	if err := client.DeleteNamespace(k8sClient, probesNamespace); err != nil {
+		klog.Fatal(err)
+	}
 	if err := client.WaitForDeleteNamespace(k8sClient, probesNamespace); err != nil {
 		klog.Fatal(err)
 	}
