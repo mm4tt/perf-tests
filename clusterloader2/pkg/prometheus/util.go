@@ -30,11 +30,11 @@ type targetsData struct {
 	ActiveTargets []Target `json:"activeTargets"`
 }
 
+// Target represents a Prometheus target object.
 type Target struct {
 	Labels map[string]string `json:"labels"`
 	Health string            `json:"health"`
 }
-
 
 // CheckTargetsReady returns true iff there is at least minExpectedTargets matching the selector and
 // all of them are ready.
