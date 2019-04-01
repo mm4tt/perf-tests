@@ -17,6 +17,8 @@ package probes
 
 import (
 	"fmt"
+	"k8s.io/client-go/kubernetes"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -46,6 +48,9 @@ const (
 
 	currentProbesMetricsVersion = "v1"
 	inClusterNetworkLatencyName = "in_cluster_network_latency"
+	// inClusterNetworkLatencyQuery - %v should be replaced with query window size.
+	inClusterNetworkLatencyQuery = "quantile_over_time(0.99, probes:in_cluster_network_latency:histogram_quantile[%v])"
+	queryWindowSize              = 5 * time.Minute
 )
 
 func init() {
@@ -161,21 +166,21 @@ func (p *probesMeasurement) start() error {
 	return nil
 }
 
-func (p *probesMeasurement) gather(params map[string]interface{}) (summary *probesSummary, err error) {
+func (p *probesMeasurement) gather(params map[string]interface{}) (*probesSummary, error) {
 	if p.startTime.IsZero() {
-		return summary, fmt.Errorf("measurement %s has not been started", name)
+		return nil, fmt.Errorf("measurement %s has not been started", name)
 	}
-
 	thresholds, err := parseAndValidateThresholds(params)
 	if err != nil {
-		return summary, nil
+		return nil, err
 	}
-
-	// 1. Run prometheus query
-	// TODO(mm4tt): Implement
-	klog.Info("Skipping querying prometheus - not implemented yet...")
-	var samples []*model.Sample
-
+	measurementEnd := time.Now()
+	// TODO(mm4tt): Rewrite when adding new probe to make it more generic.
+	query := prepareQuery(inClusterNetworkLatencyQuery, p.startTime, measurementEnd)
+	samples, err := executePrometheusQuery(p.framework.GetClientSets().GetClient(), query, measurementEnd)
+	if err != nil {
+		return nil, err
+	}
 	probe := &probeSummary{name: inClusterNetworkLatencyName}
 	for _, sample := range samples {
 		quantile, err := strconv.ParseFloat(string(sample.Metric["quantile"]), 64)
@@ -189,8 +194,7 @@ func (p *probesMeasurement) gather(params map[string]interface{}) (summary *prob
 		err = errors.NewMetricViolationError(probe.name, err.Error())
 		klog.Errorf("%s: %v", p, err)
 	}
-	summary.probeSummaries = append(summary.probeSummaries, probe)
-	return summary, err
+	return &probesSummary{probeSummaries: []*probeSummary{probe}}, err
 }
 
 func (p *probesMeasurement) createProbesObjects() error {
@@ -219,7 +223,7 @@ func (p *probesMeasurement) waitTillProbesReady() error {
 }
 
 func (p *probesMeasurement) checkProbesReady() (bool, error) {
-	expectedTargets := p.replicasPerProbe * 1 // ping-client
+	expectedTargets := p.replicasPerProbe * 2 // ping-client, ping-server
 	return prometheus.CheckTargetsReady(
 		p.framework.GetClientSets().GetClient(), isProbeTarget, expectedTargets)
 }
@@ -230,15 +234,15 @@ func isProbeTarget(t prometheus.Target) bool {
 
 func parseAndValidateThresholds(params map[string]interface{}) (map[string]*measurementutil.LatencyMetric, error) {
 	thresholds := make(map[string]*measurementutil.LatencyMetric)
-	for name, thresholdString := range params["thresholds"].(map[string]string) {
-		threshold, err := time.ParseDuration(thresholdString)
+	for name, thresholdVal := range params["thresholds"].(map[string]interface{}) {
+		threshold, err := time.ParseDuration(thresholdVal.(string))
 		if err != nil {
 			return nil, err
 		}
 		thresholds[name] = makeLatencyThreshold(threshold)
 	}
 	if _, ok := thresholds[inClusterNetworkLatencyName]; !ok {
-		return nil, fmt.Errorf("measurement %s has not been started", name)
+		return nil, fmt.Errorf("missing threshold for %s", name)
 	}
 	return thresholds, nil
 }
@@ -249,4 +253,49 @@ func makeLatencyThreshold(threshold time.Duration) *measurementutil.LatencyMetri
 		Perc90: threshold,
 		Perc99: threshold,
 	}
+}
+
+// TODO(mm4tt): Remove the methods below and start using the ones from common util once it's created.
+
+func prepareQuery(queryTemplate string, startTime, endTime time.Time) string {
+	measurementDuration := endTime.Sub(startTime)
+	return fmt.Sprintf(queryTemplate, measurementutil.ToPrometheusTime(measurementDuration))
+}
+
+func executePrometheusQuery(c kubernetes.Interface, query string, queryTime time.Time) ([]*model.Sample, error) {
+	if queryTime.IsZero() {
+		return nil, fmt.Errorf("query time can't be zero")
+	}
+	var body []byte
+	var queryErr error
+	params := map[string]string{
+		"query": query,
+		"time":  queryTime.Format(time.RFC3339),
+	}
+	if err := wait.PollImmediate(5*time.Second, 2*time.Minute, func() (bool, error) {
+		body, queryErr = c.CoreV1().
+			Services("monitoring").
+			ProxyGet("http", "prometheus-k8s", "9090", "api/v1/query", params).
+			DoRaw()
+		if queryErr != nil {
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		if queryErr != nil {
+			return nil, fmt.Errorf("query error: %v", queryErr)
+		}
+		return nil, fmt.Errorf("query error: %v", err)
+	}
+	samples, err := measurementutil.ExtractMetricSamples2(body)
+	if err != nil {
+		return nil, fmt.Errorf("exctracting error: %v", err)
+	}
+	var resultSamples []*model.Sample
+	for _, sample := range samples {
+		if !math.IsNaN(float64(sample.Value)) {
+			resultSamples = append(resultSamples, sample)
+		}
+	}
+	return resultSamples, nil
 }
