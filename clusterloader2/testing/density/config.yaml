@@ -5,7 +5,7 @@
 #Constants
 {{$DENSITY_RESOURCE_CONSTRAINTS_FILE := DefaultParam .DENSITY_RESOURCE_CONSTRAINTS_FILE ""}}
 {{$NODE_MODE := DefaultParam .NODE_MODE "allnodes"}}
-{{$NODES_PER_NAMESPACE := DefaultParam .NODES_PER_NAMESPACE 100}}
+{{$NODES_PER_NAMESPACE := DefaultParam .NODES_PER_NAMESPACE 10}}
 {{$PODS_PER_NODE := DefaultParam .PODS_PER_NODE 30}}
 {{$DENSITY_TEST_THROUGHPUT := DefaultParam .DENSITY_TEST_THROUGHPUT 20}}
 # LATENCY_POD_MEMORY and LATENCY_POD_CPU are calculated for 1-core 4GB node.
@@ -54,6 +54,11 @@ steps:
       action: start
       nodeMode: {{$NODE_MODE}}
       resourceConstraints: {{$DENSITY_RESOURCE_CONSTRAINTS_FILE}}
+  - Identifier: Probes
+    Method: Probes
+    Params:
+      action: start
+      replicasPerProbe: {{AddInt 1 (DivideInt .Nodes 200)}}
 # Create saturation pods
 - measurements:
   - Identifier: SaturationPodStartupLatency
@@ -190,3 +195,10 @@ steps:
     Method: TestMetrics
     Params:
       action: gather
+  - Identifier: Probes
+    Method: Probes
+    Params:
+      action: gather
+      thresholds:
+        # TODO(https://github.com/kubernetes/kubernetes/issues/76012): Lower the threshold once we know what to expect.
+        in_cluster_network_latency: 10s
