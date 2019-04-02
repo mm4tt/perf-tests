@@ -58,6 +58,7 @@ steps:
     Method: Probes
     Params:
       action: start
+      replicasPerProbe: {{AddInt 1 (DivideInt .Nodes 200)}}
 # Create saturation pods
 - measurements:
   - Identifier: SaturationPodStartupLatency

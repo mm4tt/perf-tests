@@ -18,10 +18,12 @@ package probes
 import (
 	"fmt"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/perf-tests/clusterloader2/pkg/flags"
 	"math"
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/prometheus/common/model"
@@ -47,26 +49,217 @@ const (
 	checkProbesReadyTimeout  = 5 * time.Minute
 
 	currentProbesMetricsVersion = "v1"
-	inClusterNetworkLatencyName = "in_cluster_network_latency"
-	// inClusterNetworkLatencyQuery - %v should be replaced with query window size.
-	inClusterNetworkLatencyQuery = "quantile_over_time(0.99, probes:in_cluster_network_latency:histogram_quantile[%v])"
-	queryWindowSize              = 5 * time.Minute
 )
 
+var probesEnabled bool
+
 func init() {
+	flags.BoolEnvVar(&probesEnabled, "enable-probes", "ENABLE_PROBES", false, "Whether to run the probes in the clusterloader2 tests.")
 	measurement.Register(name, createProbesMeasurement)
 }
 
 func createProbesMeasurement() measurement.Measurement {
-	return &probesMeasurement{}
+	return &probesMeasurement{
+		probeNameToPrometheusQueryTmpl: map[string]string{
+			"in_cluster_network_latency": "quantile_over_time(0.99, probes:in_cluster_network_latency:histogram_quantile[%v])",
+		},
+	}
 }
 
 type probesMeasurement struct {
-	isInitialized    bool
+	// probeNameToPrometheusQueryTmpl defines a config of this measurement. Updating the config in the
+	// createProbesMeasurement method is the only place in go code that needs to be changed while
+	// adding a new probe.
+	// Each query template should accept a single %v placeholder corresponding to the query window
+	// length. See the 'in_cluster_network_latency' as an example.
+	probeNameToPrometheusQueryTmpl map[string]string
+
 	framework        *framework.Framework
 	replicasPerProbe int
 	templateMapping  map[string]interface{}
+	nServiceMonitors int
 	startTime        time.Time
+	mutex            sync.Mutex
+}
+
+// Execute supports two actions:
+// - start - starts probes and sets up monitoring
+// - gather - Gathers and prints metrics.
+func (p *probesMeasurement) Execute(config *measurement.MeasurementConfig) ([]measurement.Summary, error) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	if !probesEnabled {
+		klog.Info("Probes are disabled, skipping the measurement execution")
+		return nil, nil
+	}
+	action, err := util.GetString(config.Params, "action")
+	if err != nil {
+		return nil, err
+	}
+	switch action {
+	case "start":
+		klog.Info("Starting probes...")
+		err := p.start(config)
+		return nil, err
+	case "gather":
+		klog.Info("Gathering metrics from probes...")
+		summary, err := p.gather(config.Params)
+		if err != nil && !errors.IsMetricViolationError(err) {
+			return nil, err
+		}
+		return []measurement.Summary{summary}, nil
+	default:
+		return nil, fmt.Errorf("unknown action %v", action)
+	}
+}
+
+// Dispose cleans up after the measurement.
+func (p *probesMeasurement) Dispose() {
+	klog.Info("Stopping probes...")
+	k8sClient := p.framework.GetClientSets().GetClient()
+	if err := client.DeleteNamespace(k8sClient, probesNamespace); err != nil {
+		klog.Errorf("error while deleting %s namespace: %v", probesNamespace, err)
+	}
+	if err := client.WaitForDeleteNamespace(k8sClient, probesNamespace); err != nil {
+		klog.Errorf("error while waiting for %s namespace to be deleted: %v", probesNamespace, err)
+	}
+	*p = *createProbesMeasurement().(*probesMeasurement) // Reset measurement state.
+}
+
+// String returns string representation of this measurement.
+func (p *probesMeasurement) String() string {
+	return name
+}
+
+func (p *probesMeasurement) initialize(config *measurement.MeasurementConfig) error {
+	replicasPerProbe, err := util.GetInt(config.Params, "replicasPerProbe")
+	if err != nil {
+		return err
+	}
+	p.framework = config.ClusterFramework
+	p.replicasPerProbe = replicasPerProbe
+	p.templateMapping = map[string]interface{}{"Replicas": replicasPerProbe}
+	return nil
+}
+
+func (p *probesMeasurement) start(config *measurement.MeasurementConfig) error {
+	if !p.startTime.IsZero() {
+		return fmt.Errorf("measurement %s cannot be started twice", name)
+	}
+	if err := p.initialize(config); err != nil {
+		return err
+	}
+	k8sClient := p.framework.GetClientSets().GetClient()
+	if err := client.CreateNamespace(k8sClient, probesNamespace); err != nil {
+		return err
+	}
+	if err := p.createProbesObjects(); err != nil {
+		return err
+	}
+	if err := p.waitTillProbesReady(); err != nil {
+		return err
+	}
+	p.startTime = time.Now()
+	return nil
+}
+
+func (p *probesMeasurement) gather(params map[string]interface{}) (*probesSummary, error) {
+	if p.startTime.IsZero() {
+		return nil, fmt.Errorf("measurement %s has not been started", name)
+	}
+	thresholds, err := parseThresholds(params)
+	if err != nil {
+		return nil, err
+	}
+	measurementEnd := time.Now()
+	var probeSummaries []*probeSummary
+	for probeName, queryTmpl := range p.probeNameToPrometheusQueryTmpl {
+		query := prepareQuery(queryTmpl, p.startTime, measurementEnd)
+		samples, err := executePrometheusQuery(p.framework.GetClientSets().GetClient(), query, measurementEnd)
+		if err != nil {
+			return nil, err
+		}
+		probe := &probeSummary{name: probeName}
+		for _, sample := range samples {
+			quantile, err := strconv.ParseFloat(string(sample.Metric["quantile"]), 64)
+			if err != nil {
+				return nil, err
+			}
+			latency := time.Duration(float64(sample.Value) * float64(time.Second))
+			probe.latency.SetQuantile(quantile, latency)
+		}
+		if threshold, ok := thresholds[probeName]; ok {
+			if err := probe.latency.VerifyThreshold(threshold); err != nil {
+				err = errors.NewMetricViolationError(probe.name, err.Error())
+				klog.Errorf("%s: %v", p, err)
+			}
+		}
+		probeSummaries = append(probeSummaries, probe)
+	}
+	return &probesSummary{probeSummaries: probeSummaries}, err
+}
+
+func (p *probesMeasurement) createProbesObjects() error {
+	expandedManifestGlob := os.ExpandEnv(manifestGlob)
+	templateProvider := config.NewTemplateProvider(filepath.Dir(expandedManifestGlob))
+	manifests, err := filepath.Glob(expandedManifestGlob)
+	if err != nil {
+		return err
+	}
+	for _, manifest := range manifests {
+		klog.Infof("Applying %s\n", manifest)
+		obj, err := templateProvider.TemplateToObject(filepath.Base(manifest), p.templateMapping)
+		if err != nil {
+			return err
+		}
+		if err := p.framework.CreateObject(probesNamespace, obj.GetName(), obj); err != nil {
+			return fmt.Errorf("error while applying (%s): %v", manifest, err)
+		}
+		if obj.GetKind() == "ServiceMonitor" {
+			p.nServiceMonitors++
+		}
+	}
+	return nil
+}
+
+func (p *probesMeasurement) waitTillProbesReady() error {
+	klog.Info("Waiting for Probes to become ready...")
+	return wait.Poll(checkProbesReadyInterval, checkProbesReadyTimeout, p.checkProbesReady)
+}
+
+func (p *probesMeasurement) checkProbesReady() (bool, error) {
+	expectedTargets := p.replicasPerProbe * p.nServiceMonitors
+	return prometheus.CheckTargetsReady(
+		p.framework.GetClientSets().GetClient(), isProbeTarget, expectedTargets)
+}
+
+func isProbeTarget(t prometheus.Target) bool {
+	return t.Labels["namespace"] == probesNamespace
+}
+
+func parseThresholds(params map[string]interface{}) (map[string]*measurementutil.LatencyMetric, error) {
+	thresholds := make(map[string]*measurementutil.LatencyMetric)
+	for name, thresholdVal := range params["thresholds"].(map[string]interface{}) {
+		threshold, err := time.ParseDuration(thresholdVal.(string))
+		if err != nil {
+			return nil, err
+		}
+		thresholds[name] = makeLatencyThreshold(threshold)
+	}
+	return thresholds, nil
+}
+
+func makeLatencyThreshold(threshold time.Duration) *measurementutil.LatencyMetric {
+	return &measurementutil.LatencyMetric{
+		Perc50: threshold,
+		Perc90: threshold,
+		Perc99: threshold,
+	}
+}
+
+func prepareQuery(queryTemplate string, startTime, endTime time.Time) string {
+	measurementDuration := endTime.Sub(startTime)
+	return fmt.Sprintf(queryTemplate, measurementutil.ToPrometheusTime(measurementDuration))
 }
 
 type probesSummary struct {
@@ -100,171 +293,7 @@ func (p *probesSummary) PrintSummary() (string, error) {
 	return util.PrettyPrintJSON(perfData)
 }
 
-// Execute supports two actions:
-// - start - starts probes and sets up monitoring
-// - gather - Gathers and prints metrics.
-func (p *probesMeasurement) Execute(config *measurement.MeasurementConfig) (summaries []measurement.Summary, err error) {
-	if !p.isInitialized {
-		p.initialize(config)
-	}
-	action, err := util.GetString(config.Params, "action")
-	if err != nil {
-		return nil, err
-	}
-	switch action {
-	case "start":
-		klog.Infof("%s: Starting probes...", p)
-		if err := p.start(); err != nil {
-			return nil, err
-		}
-		return summaries, nil
-	case "gather":
-		klog.Infof("%s: Gathering metrics from probes...", p)
-		summary, err := p.gather(config.Params)
-		if err == nil || errors.IsMetricViolationError(err) {
-			summaries = append(summaries, summary)
-		}
-		return summaries, err
-	default:
-		return nil, fmt.Errorf("unknown action %v", action)
-	}
-}
-
-// Dispose cleans up after the measurement.
-func (p *probesMeasurement) Dispose() {
-	klog.Infof("%s: Stopping probes...", p)
-	k8sClient := p.framework.GetClientSets().GetClient()
-	if err := client.DeleteNamespace(k8sClient, probesNamespace); err != nil {
-		klog.Fatal(err)
-	}
-	if err := client.WaitForDeleteNamespace(k8sClient, probesNamespace); err != nil {
-		klog.Fatal(err)
-	}
-}
-
-// String returns string representation of this measurement.
-func (p *probesMeasurement) String() string {
-	return name
-}
-
-func (p *probesMeasurement) initialize(config *measurement.MeasurementConfig) {
-	p.framework = config.ClusterFramework
-	p.replicasPerProbe = 1 + config.ClusterFramework.GetClusterConfig().Nodes/200
-	p.templateMapping = map[string]interface{}{"Replicas": p.replicasPerProbe}
-	p.isInitialized = true
-}
-
-func (p *probesMeasurement) start() error {
-	k8sClient := p.framework.GetClientSets().GetClient()
-	if err := client.CreateNamespace(k8sClient, probesNamespace); err != nil {
-		return err
-	}
-	if err := p.createProbesObjects(); err != nil {
-		return err
-	}
-	if err := p.waitTillProbesReady(); err != nil {
-		return err
-	}
-	p.startTime = time.Now()
-	return nil
-}
-
-func (p *probesMeasurement) gather(params map[string]interface{}) (*probesSummary, error) {
-	if p.startTime.IsZero() {
-		return nil, fmt.Errorf("measurement %s has not been started", name)
-	}
-	thresholds, err := parseAndValidateThresholds(params)
-	if err != nil {
-		return nil, err
-	}
-	measurementEnd := time.Now()
-	// TODO(mm4tt): Rewrite when adding new probe to make it more generic.
-	query := prepareQuery(inClusterNetworkLatencyQuery, p.startTime, measurementEnd)
-	samples, err := executePrometheusQuery(p.framework.GetClientSets().GetClient(), query, measurementEnd)
-	if err != nil {
-		return nil, err
-	}
-	probe := &probeSummary{name: inClusterNetworkLatencyName}
-	for _, sample := range samples {
-		quantile, err := strconv.ParseFloat(string(sample.Metric["quantile"]), 64)
-		if err != nil {
-			return nil, err
-		}
-		latency := time.Duration(float64(sample.Value) * float64(time.Second))
-		probe.latency.SetQuantile(quantile, latency)
-	}
-	if err := probe.latency.VerifyThreshold(thresholds[inClusterNetworkLatencyName]); err != nil {
-		err = errors.NewMetricViolationError(probe.name, err.Error())
-		klog.Errorf("%s: %v", p, err)
-	}
-	return &probesSummary{probeSummaries: []*probeSummary{probe}}, err
-}
-
-func (p *probesMeasurement) createProbesObjects() error {
-	expandedManifestGlob := os.ExpandEnv(manifestGlob)
-	templateProvider := config.NewTemplateProvider(filepath.Dir(expandedManifestGlob))
-	manifests, err := filepath.Glob(expandedManifestGlob)
-	if err != nil {
-		return err
-	}
-	for _, manifest := range manifests {
-		klog.Infof("Applying %s\n", manifest)
-		obj, err := templateProvider.TemplateToObject(filepath.Base(manifest), p.templateMapping)
-		if err != nil {
-			return err
-		}
-		if err := p.framework.CreateObject(probesNamespace, obj.GetName(), obj); err != nil {
-			return fmt.Errorf("error while applying (%s): %v", manifest, err)
-		}
-	}
-	return nil
-}
-
-func (p *probesMeasurement) waitTillProbesReady() error {
-	klog.Info("Waiting for Probes to become ready...")
-	return wait.Poll(checkProbesReadyInterval, checkProbesReadyTimeout, p.checkProbesReady)
-}
-
-func (p *probesMeasurement) checkProbesReady() (bool, error) {
-	expectedTargets := p.replicasPerProbe * 2 // ping-client, ping-server
-	return prometheus.CheckTargetsReady(
-		p.framework.GetClientSets().GetClient(), isProbeTarget, expectedTargets)
-}
-
-func isProbeTarget(t prometheus.Target) bool {
-	return t.Labels["namespace"] == probesNamespace
-}
-
-func parseAndValidateThresholds(params map[string]interface{}) (map[string]*measurementutil.LatencyMetric, error) {
-	thresholds := make(map[string]*measurementutil.LatencyMetric)
-	for name, thresholdVal := range params["thresholds"].(map[string]interface{}) {
-		threshold, err := time.ParseDuration(thresholdVal.(string))
-		if err != nil {
-			return nil, err
-		}
-		thresholds[name] = makeLatencyThreshold(threshold)
-	}
-	if _, ok := thresholds[inClusterNetworkLatencyName]; !ok {
-		return nil, fmt.Errorf("missing threshold for %s", name)
-	}
-	return thresholds, nil
-}
-
-func makeLatencyThreshold(threshold time.Duration) *measurementutil.LatencyMetric {
-	return &measurementutil.LatencyMetric{
-		Perc50: threshold,
-		Perc90: threshold,
-		Perc99: threshold,
-	}
-}
-
-// TODO(mm4tt): Remove the methods below and start using the ones from common util once it's created.
-
-func prepareQuery(queryTemplate string, startTime, endTime time.Time) string {
-	measurementDuration := endTime.Sub(startTime)
-	return fmt.Sprintf(queryTemplate, measurementutil.ToPrometheusTime(measurementDuration))
-}
-
+// TODO(mm4tt): Remove the method below and start using the one from common util once it's available.
 func executePrometheusQuery(c kubernetes.Interface, query string, queryTime time.Time) ([]*model.Sample, error) {
 	if queryTime.IsZero() {
 		return nil, fmt.Errorf("query time can't be zero")
