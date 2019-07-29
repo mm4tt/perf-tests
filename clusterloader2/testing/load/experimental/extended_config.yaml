@@ -12,6 +12,10 @@
 {{$BIG_GROUP_SIZE := 250}}
 {{$MEDIUM_GROUP_SIZE := 30}}
 {{$SMALL_GROUP_SIZE := 5}}
+{{$STATEFUL_SET_SIZE := 10}}
+# PV Deployment size := 10
+# Job size := 10
+# DaemonSet size := 1
 {{$ENABLE_CHAOSMONKEY := DefaultParam .ENABLE_CHAOSMONKEY false}}
 {{$PROMETHEUS_SCRAPE_KUBE_PROXY := DefaultParam .PROMETHEUS_SCRAPE_KUBE_PROXY false}}
 {{$ENABLE_PROMETHEUS_API_RESPONSIVENESS := DefaultParam .ENABLE_PROMETHEUS_API_RESPONSIVENESS false}}
@@ -19,13 +23,14 @@
 #Variables
 {{$namespaces := DivideInt .Nodes $NODES_PER_NAMESPACE}}
 {{$totalPods := MultiplyInt $namespaces $NODES_PER_NAMESPACE $PODS_PER_NODE}}
+{{$podsPerNamespace := DivideInt .$totalPods .namespaces}}
 {{$saturationTime := DivideInt $totalPods $LOAD_TEST_THROUGHPUT}}
 # bigDeployments - 1/4 of namespace pods should be in big Deployments.
-{{$bigDeploymentsPerNamespace := DivideInt (MultiplyInt $NODES_PER_NAMESPACE $PODS_PER_NODE) (MultiplyInt 4 $BIG_GROUP_SIZE)}}
+{{$bigDeploymentsPerNamespace := 0}} #DivideInt $podsPerNamespace (MultiplyInt 4 $BIG_GROUP_SIZE)}}
 # mediumDeployments - 1/4 of namespace pods should be in medium Deployments.
-{{$mediumDeploymentsPerNamespace := DivideInt (MultiplyInt $NODES_PER_NAMESPACE $PODS_PER_NODE) (MultiplyInt 4 $MEDIUM_GROUP_SIZE)}}
+{{$mediumDeploymentsPerNamespace := 0}} #DivideInt $podsPerNamespace (MultiplyInt 4 $MEDIUM_GROUP_SIZE)}}
 # smallDeployments - 1/2 of namespace pods should be in small Deployments.
-{{$smallDeploymentsPerNamespace := DivideInt (MultiplyInt $NODES_PER_NAMESPACE $PODS_PER_NODE) (MultiplyInt 2 $SMALL_GROUP_SIZE)}}
+{{$smallDeploymentsPerNamespace := 0}} #DivideInt $podsPerNamespace (MultiplyInt 2 $SMALL_GROUP_SIZE)}}
 
 
 name: load
@@ -171,6 +176,37 @@ steps:
     Params:
       action: gather
 
+- name: Starting measurement for waiting for StatefulSets
+  measurements:
+    - Identifier: WaitForRunningStatefulSets
+      Method: WaitForControlledPodsRunning
+      Params:
+        action: start
+        apiVersion: apps/v1
+        kind: StatefulSet
+        labelSelector: group = statefulset
+        operationTimeout: 15m
+
+- name: Creating StatefulSets
+  phases:
+    - namespaceRange:
+        min: 1
+        max: {{$namespaces}}
+      replicasPerNamespace: 1
+      tuningSet: RandomizedSaturationTimeLimited
+      objectBundle:
+        - basename: stateful-set
+          objectTemplatePath: statefulset.yaml
+          templateFillMap:
+            Replicas: {{$STATEFUL_SET_SIZE}}
+
+- name: Waiting for StatefulSets to be running
+  measurements:
+    - Identifier: WaitForRunningStatefulSets
+      Method: WaitForControlledPodsRunning
+      Params:
+        action: gather
+
 - name: Scaling Deployments
   phases:
   - namespaceRange:
@@ -216,6 +252,24 @@ steps:
     Method: WaitForControlledPodsRunning
     Params:
       action: gather
+
+- name: Deleting StatefulSets
+  phases:
+    - namespaceRange:
+        min: 1
+        max: {{$namespaces}}
+      replicasPerNamespace: 0
+      tuningSet: RandomizedSaturationTimeLimited
+      objectBundle:
+        - basename: stateful-set
+          objectTemplatePath: statefulset.yaml
+
+- name: Waiting for StatefulSets to be deleted
+  measurements:
+    - Identifier: WaitForRunningStatefulSets
+      Method: WaitForControlledPodsRunning
+      Params:
+        action: gather
 
 - name: Deleting Deployments
   phases:
