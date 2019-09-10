@@ -288,7 +288,7 @@ func GetReplicasFromRuntimeObject(obj runtime.Object) (int32, error) {
 		}
 		return 0, nil
 	case *appsv1.DaemonSet:
-		return 0, nil
+		return 0, fmt.Errorf("DaemonSet replicas cannot be obtained from runtime object")
 	case *batch.Job:
 		if typed.Spec.Parallelism != nil {
 			return *typed.Spec.Parallelism, nil
@@ -299,7 +299,7 @@ func GetReplicasFromRuntimeObject(obj runtime.Object) (int32, error) {
 	}
 }
 
-// Note: This function assumes each controller has field Spec.Replicas, except Daemonset and Job.
+// Note: This function assumes each controller has field Spec.Replicas, except Job.
 func getReplicasFromUnstrutured(obj *unstructured.Unstructured) (int32, error) {
 	spec, err := getSpecFromUnstrutured(obj)
 	if err != nil {
@@ -312,7 +312,7 @@ func getReplicasFromUnstrutured(obj *unstructured.Unstructured) (int32, error) {
 func tryAcquireReplicasFromUnstructuredSpec(spec map[string]interface{}, kind string) (int32, error) {
 	switch kind {
 	case "DaemonSet":
-		return 0, nil
+		return 0, fmt.Errorf("DaemonSet replicas cannot be obtained from runtime object")
 	case "Job":
 		replicas, found, err := unstructured.NestedInt64(spec, "parallelism")
 		if err != nil {

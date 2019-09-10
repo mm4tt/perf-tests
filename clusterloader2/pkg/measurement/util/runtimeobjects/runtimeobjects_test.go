@@ -306,14 +306,12 @@ func TestGetReplicasFromRuntimeObject(t *testing.T) {
 		replicaset,
 		deployment,
 		job,
-		daemonset,
 	}
 	expected := []int32{
 		defaultReplicas,
 		defaultReplicas,
 		defaultReplicas,
 		defaultReplicas,
-		0,
 	}
 	for i, obj := range objects {
 		unstructured := &unstructured.Unstructured{}

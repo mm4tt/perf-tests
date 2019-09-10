@@ -132,7 +132,7 @@ func RetryFunction(f func() error, options ...*ApiCallOptions) wait.ConditionFun
 }
 
 // ListNodes returns list of cluster nodes.
-func ListNodes(c clientset.Interface) ([]apiv1.Node, error) {
+func ListNodesWithSelector(c clientset.Interface) ([]apiv1.Node, error) {
 	var nodes []apiv1.Node
 	listFunc := func() error {
 		nodesList, err := c.CoreV1().Nodes().List(metav1.ListOptions{})
