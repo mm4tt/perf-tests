@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	clientset "k8s.io/client-go/kubernetes"
 	"k8s.io/perf-tests/clusterloader2/pkg/framework/client"
+	"k8s.io/perf-tests/clusterloader2/pkg/util"
 )
 
 // ListRuntimeObjectsForKind returns objects of given kind that satisfy given namespace, labelSelector and fieldSelector.
@@ -266,7 +267,7 @@ func GetReplicasFromRuntimeObject(c clientset.Interface, obj runtime.Object) (in
 	}
 	switch typed := obj.(type) {
 	case *unstructured.Unstructured:
-		return getReplicasFromUnstrutured(typed)
+		return getReplicasFromUnstrutured(c, typed)
 	case *corev1.ReplicationController:
 		if typed.Spec.Replicas != nil {
 			return *typed.Spec.Replicas, nil
@@ -288,7 +289,7 @@ func GetReplicasFromRuntimeObject(c clientset.Interface, obj runtime.Object) (in
 		}
 		return 0, nil
 	case *appsv1.DaemonSet:
-		return GetDaemonSetReplicas(c, typed)
+		return GetNumSchedulableNodesMatchingSelector(c, typed.Spec.Template.Spec.NodeSelector)
 	case *batch.Job:
 		if typed.Spec.Parallelism != nil {
 			return *typed.Spec.Parallelism, nil
@@ -299,31 +300,44 @@ func GetReplicasFromRuntimeObject(c clientset.Interface, obj runtime.Object) (in
 	}
 }
 
-// GetDaemonSetReplicas returns the number of nodes where the daemonset pods will be run.
-func GetDaemonSetReplicas(c clientset.Interface, daemonSet *appsv1.DaemonSet) (int32, error) {
-	nodeSelector, err := metav1.LabelSelectorAsSelector(metav1.SetAsLabelSelector(daemonSet.Spec.Template.Spec.NodeSelector))
+// GetNumSchedulableNodesMatchingSelector returns the number of schedulable nodes matching the provided selector.
+func GetNumSchedulableNodesMatchingSelector(c clientset.Interface, nodeSelector map[string]string) (int32, error) {
+	selector, err := metav1.LabelSelectorAsSelector(metav1.SetAsLabelSelector(nodeSelector))
 	if err != nil {
 		return 0, err
 	}
-	listOpts := metav1.ListOptions{LabelSelector: nodeSelector.String()}
+	listOpts := metav1.ListOptions{LabelSelector: selector.String()}
 	list, err := client.ListNodesWithOptions(c, listOpts)
-	return int32(len(list)), err
+	if err != nil {
+		return 0, err
+	}
+	var numSchedulableNodes int32
+	for _, node := range list {
+		if util.IsNodeSchedulableAndUntainted(&node) {
+			numSchedulableNodes++
+		}
+	}
+	return numSchedulableNodes, nil
 }
 
 // Note: This function assumes each controller has field Spec.Replicas, except Job.
-func getReplicasFromUnstrutured(obj *unstructured.Unstructured) (int32, error) {
+func getReplicasFromUnstrutured(c clientset.Interface, obj *unstructured.Unstructured) (int32, error) {
 	spec, err := getSpecFromUnstrutured(obj)
 	if err != nil {
 		return -1, err
 	}
 
-	return tryAcquireReplicasFromUnstructuredSpec(spec, obj.GetKind())
+	return tryAcquireReplicasFromUnstructuredSpec(c, spec, obj.GetKind())
 }
 
-func tryAcquireReplicasFromUnstructuredSpec(spec map[string]interface{}, kind string) (int32, error) {
+func tryAcquireReplicasFromUnstructuredSpec(c clientset.Interface, spec map[string]interface{}, kind string) (int32, error) {
 	switch kind {
 	case "DaemonSet":
-		return 0, fmt.Errorf("DaemonSet replicas cannot be obtained from runtime object")
+		nodeSelector, err := getDaemonSetNodeSelectorFromUnstructuredSpec(spec)
+		if err != nil {
+			return 0, err
+		}
+		return GetNumSchedulableNodesMatchingSelector(c, nodeSelector)
 	case "Job":
 		replicas, found, err := unstructured.NestedInt64(spec, "parallelism")
 		if err != nil {
@@ -343,6 +357,19 @@ func tryAcquireReplicasFromUnstructuredSpec(spec map[string]interface{}, kind st
 		}
 		return int32(replicas), nil
 	}
+}
+
+func getDaemonSetNodeSelectorFromUnstructuredSpec(spec map[string]interface{}) (map[string]string, error) {
+	template, found, err := unstructured.NestedMap(spec, "template")
+	if err != nil || !found {
+		return nil, err
+	}
+	podSpec, found, err := unstructured.NestedMap(template, "spec")
+	if err != nil || !found {
+		return nil, err
+	}
+	nodeSelector, found, err := unstructured.NestedStringMap(podSpec, "nodeSelector")
+	return nodeSelector, err
 }
 
 // IsEqualRuntimeObjectsSpec returns true if given runtime objects have identical specs.

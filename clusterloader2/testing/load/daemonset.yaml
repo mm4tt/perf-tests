@@ -1,0 +1,29 @@
+{{$Image := DefaultParam .Image "k8s.gcr.io/pause:3.1"}}
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{.Name}}
+  labels:
+    group: load
+spec:
+  updateStrategy:
+    rollingUpdate:
+      # TODO(mm4tt): Change to abs value, ideally a QPS passed via arg
+      maxUnavailable: 25%
+  selector:
+    matchLabels:
+      name: {{.Name}}
+  template:
+    metadata:
+      labels:
+        group: load
+        name: {{.Name}}
+    spec:
+      containers:
+      - name: {{.Name}}
+        image: {{$Image}}
+        resources:
+          requests:
+            cpu: 10m
+            memory: "10M"
