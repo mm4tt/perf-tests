@@ -29,7 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/perf-tests/clusterloader2/pkg/measurement/util/runtimeobjects"
 )
@@ -314,13 +314,14 @@ func TestGetReplicasFromRuntimeObject(t *testing.T) {
 		defaultReplicas,
 		defaultReplicas,
 	}
-	var client fake.Clientset
+	// TODO(mm4tt): Use fake client and test logic for DaemonSets
+	var client kubernetes.Interface
 	for i, obj := range objects {
 		unstructured := &unstructured.Unstructured{}
 		if err := scheme.Scheme.Convert(obj, unstructured, nil); err != nil {
 			t.Fatalf("error converting controller to unstructured: %v", err)
 		}
-		replicas, err := runtimeobjects.GetReplicasFromRuntimeObject(client, unstructured)
+		replicas, err := runtimeobjects.GetReplicasFromRuntimeObject(client , unstructured)
 		if err != nil {
 			t.Fatalf("get replicas from runtime object failed: %v", err)
 		}
