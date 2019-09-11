@@ -260,7 +260,7 @@ func getSpecFromUnstrutured(obj *unstructured.Unstructured) (map[string]interfac
 }
 
 // GetReplicasFromRuntimeObject returns replicas number from given runtime object.
-func GetReplicasFromRuntimeObject(obj runtime.Object) (int32, error) {
+func GetReplicasFromRuntimeObject(c clientset.Interface, obj runtime.Object) (int32, error) {
 	if obj == nil {
 		return 0, nil
 	}
@@ -288,7 +288,7 @@ func GetReplicasFromRuntimeObject(obj runtime.Object) (int32, error) {
 		}
 		return 0, nil
 	case *appsv1.DaemonSet:
-		return 0, fmt.Errorf("DaemonSet replicas cannot be obtained from runtime object")
+		return GetDaemonSetReplicas(c, typed)
 	case *batch.Job:
 		if typed.Spec.Parallelism != nil {
 			return *typed.Spec.Parallelism, nil
@@ -297,6 +297,17 @@ func GetReplicasFromRuntimeObject(obj runtime.Object) (int32, error) {
 	default:
 		return -1, fmt.Errorf("unsupported kind when getting number of replicas: %v", obj)
 	}
+}
+
+// GetDaemonSetReplicas returns the number of nodes where the daemonset pods will be run.
+func GetDaemonSetReplicas(c clientset.Interface, daemonSet *appsv1.DaemonSet) (int32, error) {
+	nodeSelector, err := metav1.LabelSelectorAsSelector(metav1.SetAsLabelSelector(daemonSet.Spec.Template.Spec.NodeSelector))
+	if err != nil {
+		return 0, err
+	}
+	listOpts := metav1.ListOptions{LabelSelector: nodeSelector.String()}
+	list, err := client.ListNodesWithOptions(c, listOpts)
+	return int32(len(list)), err
 }
 
 // Note: This function assumes each controller has field Spec.Replicas, except Job.
