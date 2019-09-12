@@ -9,6 +9,8 @@
 {{$NODES_PER_NAMESPACE := DefaultParam .NODES_PER_NAMESPACE 100}}
 {{$PODS_PER_NODE := DefaultParam .PODS_PER_NODE 30}}
 {{$LOAD_TEST_THROUGHPUT := DefaultParam .LOAD_TEST_THROUGHPUT 10}}
+# TODO: Remove
+{{$LOAD_TEST_THROUGHPUT := 100}}
 {{$BIG_GROUP_SIZE := 250}}
 {{$MEDIUM_GROUP_SIZE := 30}}
 {{$SMALL_GROUP_SIZE := 5}}
@@ -17,6 +19,7 @@
 {{$ENABLE_CHAOSMONKEY := DefaultParam .ENABLE_CHAOSMONKEY false}}
 {{$ENABLE_PROMETHEUS_API_RESPONSIVENESS := DefaultParam .ENABLE_PROMETHEUS_API_RESPONSIVENESS false}}
 {{$ENABLE_CONFIGMAPS := DefaultParam .ENABLE_CONFIGMAPS false}}
+{{$ENABLE_JOBS := DefaultParam .ENABLE_JOBS false}}
 {{$ENABLE_SECRETS := DefaultParam .ENABLE_SECRETS false}}
 {{$ENABLE_STATEFULSETS := DefaultParam .ENABLE_STATEFULSETS false}}
 #Variables
@@ -33,6 +36,13 @@
 # If StatefulSets are enabled reduce the number of small and medium deployments per namespace
 {{$smallDeploymentsPerNamespace := SubtractInt $smallDeploymentsPerNamespace (IfThenElse $ENABLE_STATEFULSETS $SMALL_STATEFUL_SETS_PER_NAMESPACE 0)}}
 {{$mediumDeploymentsPerNamespace := SubtractInt $mediumDeploymentsPerNamespace (IfThenElse $ENABLE_STATEFULSETS $MEDIUM_STATEFUL_SETS_PER_NAMESPACE 0)}}
+
+
+# TODO(mmat): Remove
+{{$bigDeploymentsPerNamespace := 0}}
+{{$mediumDeploymentsPerNamespace := 1}}
+{{$smallDeploymentsPerNamespace := 2}}
+
 
 
 name: load
@@ -142,6 +152,16 @@ steps:
       labelSelector: group = load
       operationTimeout: 15m
   {{end}}
+  {{if $ENABLE_JOBS}}
+  - Identifier: WaitForRunningJobs
+    Method: WaitForControlledPodsRunning
+    Params:
+      action: start
+      apiVersion: batch/v1
+      kind: Job
+      labelSelector: group = load
+      operationTimeout: 15m
+  {{end}}
 
 - name: Creating objects
   phases:
@@ -233,6 +253,19 @@ steps:
           ReplicasMin: {{$MEDIUM_GROUP_SIZE}}
           ReplicasMax: {{$MEDIUM_GROUP_SIZE}}
   {{end}}
+  {{if $ENABLE_JOBS}}
+  - namespaceRange:
+      min: 1
+      max: {{$namespaces}}
+    replicasPerNamespace: 2 # TODO
+    tuningSet: RandomizedSaturationTimeLimited
+    objectBundle:
+      - basename: job
+        objectTemplatePath: job.yaml
+        templateFillMap:
+          ReplicasMin: {{$MEDIUM_GROUP_SIZE}}
+          ReplicasMax: {{$MEDIUM_GROUP_SIZE}}
+  {{end}}
 
 - name: Waiting for pods to be running
   measurements:
@@ -242,6 +275,12 @@ steps:
       action: gather
   {{if $ENABLE_STATEFULSETS}}
   - Identifier: WaitForRunningStatefulSets
+    Method: WaitForControlledPodsRunning
+    Params:
+      action: gather
+  {{end}}
+  {{if $ENABLE_STATEFULSETS}}
+  - Identifier: WaitForRunningJobs
     Method: WaitForControlledPodsRunning
     Params:
       action: gather
@@ -309,6 +348,19 @@ steps:
           ReplicasMin: {{MultiplyInt $MEDIUM_GROUP_SIZE 0.5}}
           ReplicasMax: {{MultiplyInt $MEDIUM_GROUP_SIZE 1.5}}
   {{end}}
+  {{if $ENABLE_JOBS}}
+  - namespaceRange:
+      min: 1
+      max: {{$namespaces}}
+    replicasPerNamespace: 2 # TODO
+    tuningSet: RandomizedSaturationTimeLimited
+    objectBundle:
+      - basename: job
+        objectTemplatePath: job.yaml
+        templateFillMap:
+          ReplicasMin: {{MultiplyInt $MEDIUM_GROUP_SIZE 0.5}}
+          ReplicasMax: {{MultiplyInt $MEDIUM_GROUP_SIZE 1.5}}
+  {{end}}
 
 - name: Waiting for objects to become scaled
   measurements:
@@ -322,6 +374,13 @@ steps:
     Params:
       action: gather
   {{end}}
+  {{if $ENABLE_STATEFULSETS}}
+  - Identifier: WaitForRunningJobs
+    Method: WaitForControlledPodsRunning
+    Params:
+      action: gather
+  {{end}}
+
 
 - name: Deleting objects
   phases:
@@ -404,6 +463,12 @@ steps:
       action: gather
   {{if $ENABLE_STATEFULSETS}}
   - Identifier: WaitForRunningStatefulSets
+    Method: WaitForControlledPodsRunning
+    Params:
+      action: gather
+  {{end}}
+  {{if $ENABLE_STATEFULSETS}}
+  - Identifier: WaitForRunningJobs
     Method: WaitForControlledPodsRunning
     Params:
       action: gather
