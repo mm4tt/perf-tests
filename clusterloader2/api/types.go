@@ -90,6 +90,17 @@ type Object struct {
 	ObjectTemplatePath string `json: objectTemplatePath`
 	// TemplateFillMap specifies for each placeholder what value should it be replaced with.
 	TemplateFillMap map[string]interface{} `json: templateFillMap`
+	// ListUnknownObjectOptions, if set, will result in listing objects that were
+	// not created directly via ClusterLoader2 before executing Phase. The main
+	// use case for that is deleting unknown objects using the Phase mechanism,
+	// e.g. deleting PVs that were created via StatefulSets leveraging all Phase
+	// functionalities, e.g. respecting given QPS, doing it in parallel with other
+	// Phases, etc.
+	ListUnknownObjectOptions
+}
+
+type ListUnknownObjectOptions struct {
+	LabelSelector map[string]string `json: labelSelector`
 }
 
 // NamespaceRange specifies the range of namespaces [Min, Max].

@@ -166,6 +166,7 @@ func (ste *simpleTestExecutor) ExecutePhase(ctx Context, phase *api.Phase) *erro
 			}
 			instances, exists := ctx.GetState().GetNamespacesState().Get(nsName, id)
 			if !exists {
+				phase.ObjectBundle[j].
 				instances = &state.InstancesState{
 					DesiredReplicaCount: 0,
 					CurrentReplicaCount: 0,
