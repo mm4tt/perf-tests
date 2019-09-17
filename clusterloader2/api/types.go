@@ -18,6 +18,8 @@ package api
 
 import (
 	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TestSuite defines list of test scenarios to be run.
@@ -96,11 +98,11 @@ type Object struct {
 	// e.g. deleting PVs that were created via StatefulSets leveraging all Phase
 	// functionalities, e.g. respecting given QPS, doing it in parallel with other
 	// Phases, etc.
-	ListUnknownObjectOptions
+	ListUnknownObjectOptions *ListUnknownObjectOptions `json: listUnknownObjectOptions`
 }
 
 type ListUnknownObjectOptions struct {
-	LabelSelector map[string]string `json: labelSelector`
+	LabelSelector *metav1.LabelSelector `json: labelSelector`
 }
 
 // NamespaceRange specifies the range of namespaces [Min, Max].

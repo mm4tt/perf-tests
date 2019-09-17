@@ -9,6 +9,10 @@
 {{$NODES_PER_NAMESPACE := DefaultParam .NODES_PER_NAMESPACE 100}}
 {{$PODS_PER_NODE := DefaultParam .PODS_PER_NODE 30}}
 {{$LOAD_TEST_THROUGHPUT := DefaultParam .LOAD_TEST_THROUGHPUT 10}}
+
+  # TODO: Remove
+  {{$LOAD_TEST_THROUGHPUT := 100}}
+
 {{$BIG_GROUP_SIZE := 250}}
 {{$MEDIUM_GROUP_SIZE := 30}}
 {{$SMALL_GROUP_SIZE := 5}}
@@ -18,6 +22,7 @@
 {{$ENABLE_PROMETHEUS_API_RESPONSIVENESS := DefaultParam .ENABLE_PROMETHEUS_API_RESPONSIVENESS false}}
 {{$ENABLE_CONFIGMAPS := DefaultParam .ENABLE_CONFIGMAPS false}}
 {{$ENABLE_DAEMONSETS := DefaultParam .ENABLE_DAEMONSETS false}}
+{{$ENABLE_PVS := DefaultParam .ENABLE_PVS false}}
 {{$ENABLE_SECRETS := DefaultParam .ENABLE_SECRETS false}}
 {{$ENABLE_STATEFULSETS := DefaultParam .ENABLE_STATEFULSETS false}}
 #Variables
@@ -34,6 +39,12 @@
 # If StatefulSets are enabled reduce the number of small and medium deployments per namespace
 {{$smallDeploymentsPerNamespace := SubtractInt $smallDeploymentsPerNamespace (IfThenElse $ENABLE_STATEFULSETS $SMALL_STATEFUL_SETS_PER_NAMESPACE 0)}}
 {{$mediumDeploymentsPerNamespace := SubtractInt $mediumDeploymentsPerNamespace (IfThenElse $ENABLE_STATEFULSETS $MEDIUM_STATEFUL_SETS_PER_NAMESPACE 0)}}
+
+
+  # TODO(mmat): Remove
+  {{$bigDeploymentsPerNamespace := 0}}
+  {{$mediumDeploymentsPerNamespace := 1}}
+  {{$smallDeploymentsPerNamespace := 2}}
 
 
 name: load
@@ -441,6 +452,37 @@ steps:
         objectTemplatePath: statefulset.yaml
       - basename: medium-statefulset
         objectTemplatePath: statefulset_service.yaml
+  # If both StatefulSets and PVs were enabled we need to delete PVs manually.
+  {{if $ENABLE_PVS}}
+  - namespaceRange:
+      min: 1
+      max: {{$namespaces}}
+    replicasPerNamespace: 0
+    tuningSet: RandomizedSaturationTimeLimited
+    objectBundle:
+      {{range $ssIndex := Seq $SMALL_STATEFUL_SETS_PER_NAMESPACE}}
+      - basename: pv-small-statefulset-{{$ssIndex}}
+        objectTemplatePath: pvc.yaml
+        listUnknownObjectOptions:
+          labelSelector:
+            matchLabels:
+              name: small-statefulset-{{$ssIndex}}
+      {{end}}
+  - namespaceRange:
+      min: 1
+      max: {{$namespaces}}
+    replicasPerNamespace: 0
+    tuningSet: RandomizedSaturationTimeLimited
+    objectBundle:
+      {{range $ssIndex := Seq $MEDIUM_STATEFUL_SETS_PER_NAMESPACE}}
+      - basename: pv-medium-statefulset-{{$ssIndex}}
+        objectTemplatePath: pvc.yaml
+        listUnknownObjectOptions:
+          labelSelector:
+            matchLabels:
+              name: medium-statefulset-{{$ssIndex}}
+      {{end}}
+  {{end}}
   {{end}}
   {{if $ENABLE_DAEMONSETS}}
   - namespaceRange:
@@ -453,7 +495,7 @@ steps:
         objectTemplatePath: daemonset.yaml
   {{end}}
 
-- name: Waiting for pods to be deleted
+- name: Waiting for objects to be deleted
   measurements:
   - Identifier: WaitForRunningDeployments
     Method: WaitForControlledPodsRunning
@@ -471,6 +513,14 @@ steps:
     Params:
       action: gather
   {{end}}
+  {{ if and $ENABLE_STATEFULSETS $ENABLE_PVS }}
+  - Identifier: WaitForPVCsToBeDeleted
+    Method: WaitForBoundPVCs
+    Params:
+      desiredPVCCount: 0
+      labelSelector: group = load
+      timeout: 15m
+  {{ end }}
 
 - name: Deleting SVCs
   phases:
