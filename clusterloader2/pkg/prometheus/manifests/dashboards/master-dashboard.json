@@ -64,7 +64,7 @@
           "targets": [
             {
               "datasource": "",
-              "expr": "sum(rate(apiserver_request_count{client=\"clusterloader/v0.0.0 (linux/amd64) kubernetes/$Format\", verb!=\"CONNECT\"}[1m])) by (verb, resource)",
+              "expr": "sum(rate(apiserver_request_total{client=~\"clusterloader/v0.0.0.*\", verb!=\"CONNECT\"}[1m])) by (verb, resource)",
               "format": "time_series",
               "instant": false,
               "interval": "5s",
@@ -160,7 +160,7 @@
           "targets": [
             {
               "datasource": "",
-              "expr": "apiserver:apiserver_request_latency:histogram_quantile{quantile=\"0.99\", verb!~\"CONNECT|LIST|WATCH\"}",
+              "expr": "apiserver:apiserver_request_latency:histogram_quantile{quantile=\"0.99\", verb!~\"CONNECT|WATCH|DELETECOLLECTION\"}",
               "format": "time_series",
               "instant": false,
               "interval": "5s",
@@ -2520,7 +2520,7 @@
           "targets": [
             {
               "datasource": "",
-              "expr": "go_goroutines{job=\"master\", endpoint=\"apiserver\"}",
+              "expr": "go_goroutines{job=\"kubemark-master\", endpoint=\"apiserver\"}",
               "format": "time_series",
               "instant": false,
               "interval": "5s",
@@ -2616,7 +2616,7 @@
           "targets": [
             {
               "datasource": "",
-              "expr": "rate(go_gc_duration_seconds_count{job=\"master\", endpoint=\"apiserver\"}[1m])",
+              "expr": "rate(go_gc_duration_seconds_count{job=\"kubemark-master\", endpoint=\"apiserver\"}[1m])",
               "format": "time_series",
               "instant": false,
               "interval": "5s",
@@ -2712,7 +2712,7 @@
           "targets": [
             {
               "datasource": "",
-              "expr": "rate(go_memstats_alloc_bytes_total{job=\"master\", endpoint=\"apiserver\"}[1m])",
+              "expr": "rate(go_memstats_alloc_bytes_total{job=\"kubemark-master\", endpoint=\"apiserver\"}[1m])",
               "format": "time_series",
               "instant": false,
               "interval": "5s",
@@ -3288,7 +3288,7 @@
           "targets": [
             {
               "datasource": "",
-              "expr": "sum(rate(apiserver_request_count[1m])) by (verb, resource, instance)",
+              "expr": "sum(rate(apiserver_request_total[1m])) by (verb, resource, instance)",
               "format": "time_series",
               "instant": false,
               "interval": "5s",
@@ -3384,7 +3384,7 @@
           "targets": [
             {
               "datasource": "",
-              "expr": "sum(rate(apiserver_request_count[1m])) by (code, instance)",
+              "expr": "sum(rate(apiserver_request_total[1m])) by (code, instance)",
               "format": "time_series",
               "instant": false,
               "interval": "5s",
@@ -3672,7 +3672,7 @@
           "targets": [
             {
               "datasource": "",
-              "expr": "sum(rate(apiserver_request_count{verb=\"LIST\", resource=~\"nodes|pods|services|endpoints|replicationcontrollers\"}[1m])) by (resource, client)",
+              "expr": "sum(rate(apiserver_request_total{verb=\"LIST\", resource=~\"nodes|pods|services|endpoints|replicationcontrollers\"}[1m])) by (resource, client)",
               "format": "time_series",
               "instant": false,
               "interval": "5s",

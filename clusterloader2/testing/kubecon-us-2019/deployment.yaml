@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{.Name}}
+  labels:
+    app: my-deployment
+spec:
+  replicas: {{.Replicas}}
+  selector:
+    matchLabels:
+      name: {{.Name}}
+  template:
+    metadata:
+      labels:
+        name: {{.Name}}
+        app: my-deployment
+    spec:
+      containers:
+      - image: k8s.gcr.io/pause:3.1
+        imagePullPolicy: IfNotPresent
+        name: {{.Name}}
+        resources:
+          requests:
+            cpu: {{.CpuRequest}}
+            memory: {{.MemoryRequest}}

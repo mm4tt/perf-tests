@@ -43,7 +43,7 @@ const (
 	defaultServiceMonitors       = "$GOPATH/src/k8s.io/perf-tests/clusterloader2/pkg/prometheus/manifests/default/*.yaml"
 	masterIPServiceMonitors      = "$GOPATH/src/k8s.io/perf-tests/clusterloader2/pkg/prometheus/manifests/default/master-ip/*.yaml"
 	kubemarkServiceMonitors      = "$GOPATH/src/k8s.io/perf-tests/clusterloader2/pkg/prometheus/manifests/kubemark/*.yaml"
-	checkPrometheusReadyInterval = 30 * time.Second
+	checkPrometheusReadyInterval = 10 * time.Second
 	checkPrometheusReadyTimeout  = 15 * time.Minute
 	numK8sClients                = 1
 	nodeExporterPod              = "$GOPATH/src/k8s.io/perf-tests/clusterloader2/pkg/prometheus/manifests/exporters/node-exporter.yaml"

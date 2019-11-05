@@ -1,0 +1,106 @@
+{{$namespaceCount := DivideInt .Nodes 500}} # 1 namespace for every 500 nodes.
+{{$podCount := MultiplyInt .Nodes 5}} # 5 pods per node.
+{{$perNamespacePodCount := DivideInt $podCount $namespaceCount}}
+# 1 deployment for every 100 pods.
+{{$perDeploymentPodCount := 100}}
+{{$perNamespaceDeploymentCount := DivideInt $perNamespacePodCount $perDeploymentPodCount}}
+
+# For 1000 node cluster the test will create
+#   2 namespaces
+#   5000 pods (2500 per namespace)
+#   50 deployments (25 per namespace)
+
+name: kubecon-example
+
+automanagedNamespaces: {{$namespaceCount}}
+
+tuningSets:
+- name: Uniform5qps
+  qpsLoad:
+    qps: 5
+
+steps:
+- name: Starting measurements
+  measurements:
+  - Identifier: APIResponsivenessPrometheus
+    Method: APIResponsivenessPrometheus
+    Params:
+      action: start
+  - Identifier: WaitForRunningMyDeploymentPods
+    Method: WaitForControlledPodsRunning
+    Params:
+      action: start
+      apiVersion: apps/v1
+      kind: Deployment
+      labelSelector: app = my-deployment
+      operationTimeout: 5m
+
+- name: Creating deployments
+  phases:
+  - namespaceRange:
+      min: 1
+      max: {{$namespaceCount}}
+    replicasPerNamespace: {{$perNamespaceDeploymentCount}}
+    tuningSet: Uniform5qps
+    objectBundle:
+    - basename: my-deployment
+      objectTemplatePath: deployment.yaml
+      templateFillMap:
+        Replicas: {{$perDeploymentPodCount}}
+        CpuRequest: 10m
+        MemoryRequest: 10M
+
+- name: Waiting for pods to be created
+  measurements:
+  - Identifier: WaitForRunningMyDeploymentPods
+    Method: WaitForControlledPodsRunning
+    Params:
+      action: gather
+
+- name: Scaling deployments up
+  phases:
+  - namespaceRange:
+      min: 1
+      max: {{$namespaceCount}}
+    replicasPerNamespace: {{$perNamespaceDeploymentCount}}
+    tuningSet: Uniform5qps
+    objectBundle:
+    - basename: my-deployment
+      objectTemplatePath: deployment.yaml
+      templateFillMap:
+        Replicas: {{AddInt $perDeploymentPodCount 2}}
+        CpuRequest: 10m
+        MemoryRequest: 10M
+
+- name: Waiting for deployments to become scaled
+  measurements:
+  - Identifier: WaitForRunningMyDeploymentPods
+    Method: WaitForControlledPodsRunning
+    Params:
+      action: gather
+
+- name: Deleting deployments
+  phases:
+    - namespaceRange:
+        min: 1
+        max: {{$namespaceCount}}
+      replicasPerNamespace: 0
+      tuningSet: Uniform5qps
+      objectBundle:
+        - basename: my-deployment
+          objectTemplatePath: deployment.yaml
+
+- name: Waiting for pods to be deleted
+  measurements:
+    - Identifier: WaitForRunningMyDeploymentPods
+      Method: WaitForControlledPodsRunning
+      Params:
+        action: gather
+
+- name: Collecting measurements
+  measurements:
+  - Identifier: APIResponsivenessPrometheus
+    Method: APIResponsivenessPrometheus
+    Params:
+      action: gather
+      enableViolations: true
