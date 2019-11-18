@@ -268,6 +268,7 @@ func (ste *simpleTestExecutor) ExecuteObject(ctx Context, object *api.Object, na
 		if err != nil && err != config.ErrorEmptyFile {
 			return errors.NewErrorList(fmt.Errorf("reading template (%v) error: %v", object.ObjectTemplatePath, err))
 		}
+		fmt.Printf("Going to apply object: \n%#v\n", obj)
 	case DELETE_OBJECT:
 		obj, err = ctx.GetTemplateProvider().RawToObject(object.ObjectTemplatePath)
 		if err != nil && err != config.ErrorEmptyFile {
