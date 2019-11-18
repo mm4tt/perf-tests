@@ -51,6 +51,9 @@ func createSimpleTestExecutor() TestExecutor {
 
 // ExecuteTest executes test based on provided configuration.
 func (ste *simpleTestExecutor) ExecuteTest(ctx Context, conf *api.Config) *errors.ErrorList {
+	if errList := verifyConfig(ctx, conf); errList != nil && !errList.IsEmpty() {
+		return errList
+	}
 	ctx.GetClusterFramework().SetAutomanagedNamespacePrefix(fmt.Sprintf("test-%s", util.RandomDNS1123String(6)))
 	klog.Infof("AutomanagedNamespacePrefix: %s", ctx.GetClusterFramework().GetAutomanagedNamespacePrefix())
 	defer cleanupResources(ctx)
@@ -386,4 +389,27 @@ func getReplicaCountOfNewObject(ctx Context, namespace string, object *api.Objec
 	}
 	klog.V(4).Infof("%s: found %d replicas", object.Basename, replicaCount)
 	return int32(replicaCount), nil
+}
+
+func verifyConfig(ctx Context, conf *api.Config) *errors.ErrorList {
+	errList := errors.NewErrorList()
+	for iStep, step := range conf.Steps {
+		for iPhase, phase := range step.Phases {
+			ids := make(map[state.InstancesIdentifier]bool)
+			for iObject, object := range phase.ObjectBundle {
+				id, err := getIdentifier(ctx, &object)
+				if err != nil {
+					errList.Append(err)
+					continue
+				}
+				if ok := ids[id]; ok {
+					errList.Append(
+						fmt.Errorf("step %d (%s), phase %d, object %d: duplicate identifier: %v",
+							iStep, step.Name, iPhase, iObject, id))
+				}
+				ids[id] = true
+			}
+		}
+	}
+	return errList
 }
