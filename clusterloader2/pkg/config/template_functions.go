@@ -62,7 +62,11 @@ func GetFuncs() template.FuncMap {
 }
 
 func seq(size interface{}) []int {
-	return make([]int, int(toFloat64(size)))
+	a := make([]int, int(toFloat64(size)))
+	for i := range a {
+		a[i] = i
+	}
+	return a
 }
 
 func toFloat64(val interface{}) float64 {
