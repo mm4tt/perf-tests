@@ -3,12 +3,13 @@
 1. Create a 1000 node **Kubemark** cluster
     ```
     cd $GOPATH/src/k8s.io/kubernetes
-    make quick-release
+    #make quick-release
     source $GOPATH/src/github.com/mm4tt/k8s-util/set-common-envs/set-common-envs.sh preset-e2e-kubemark-common
     source $GOPATH/src/github.com/mm4tt/k8s-util/set-common-envs/set-common-envs.sh preset-e2e-kubemark-gce-scale
     
     kubetest \
       --provider=gce \
+      --extract=gs://kubernetes-release/release/stable-1.18.txt \
       --gcp-project=$PROJECT \
       --gcp-zone=$ZONE \
       --gcp-node-size=n1-standard-8 \
