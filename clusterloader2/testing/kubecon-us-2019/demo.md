@@ -21,7 +21,7 @@
     ```
 1. Get kubeconfigs for the two clusters
    ```
-   export KUBEMARK_KUBECONFIG=$GOPATH/src/k8s.io/kubernetes/test/kubemark/resources/kubeconfig.kubemark
+   export KUBEMARK_KUBECONFIG=$GOPATH/src/k8s.io/kubernetes/kubernetes/test/kubemark/resources/kubeconfig.kubemark
    export ROOT_KUBECONFIG=$HOME/.kube/config
    ```
    
