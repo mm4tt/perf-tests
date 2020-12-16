@@ -18,8 +18,10 @@ package test
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 
+	"k8s.io/klog"
 	"k8s.io/perf-tests/clusterloader2/pkg/config"
 	"k8s.io/perf-tests/clusterloader2/pkg/errors"
 	"k8s.io/perf-tests/clusterloader2/pkg/framework"
@@ -44,9 +46,9 @@ func RunTest(
 	clusterLoaderConfig *config.ClusterLoaderConfig,
 	testReporter Reporter,
 ) *errors.ErrorList {
-	if clusterFramework == nil {
-		return errors.NewErrorList(fmt.Errorf("framework must be provided"))
-	}
+	//if clusterFramework == nil {
+	//	return errors.NewErrorList(fmt.Errorf("framework must be provided"))
+	//}
 	if clusterLoaderConfig == nil {
 		return errors.NewErrorList(fmt.Errorf("cluster loader config must be provided"))
 	}
@@ -78,17 +80,28 @@ func RunTest(
 	}
 
 	// TODO: remove them after the deprecated command options are removed.
-	if testConfig.Namespace.DeleteStaleNamespaces == nil {
-		testConfig.Namespace.DeleteStaleNamespaces = &clusterFramework.GetClusterConfig().DeleteStaleNamespaces
-	}
-	if testConfig.Namespace.DeleteAutomanagedNamespaces == nil {
-		testConfig.Namespace.DeleteAutomanagedNamespaces = &clusterFramework.GetClusterConfig().DeleteAutomanagedNamespaces
-	}
+	//if testConfig.Namespace.DeleteStaleNamespaces == nil {
+	//	testConfig.Namespace.DeleteStaleNamespaces = &clusterFramework.GetClusterConfig().DeleteStaleNamespaces
+	//}
+	//if testConfig.Namespace.DeleteAutomanagedNamespaces == nil {
+	//	testConfig.Namespace.DeleteAutomanagedNamespaces = &clusterFramework.GetClusterConfig().DeleteAutomanagedNamespaces
+	//}
 
 	testConfig.SetDefaults()
 	if err := testConfig.Validate(); err != nil {
 		return err
 	}
+
+	steps, err := flattenModuleSteps(ctx, testConfig.Steps)
+	if err != nil {
+		return errors.NewErrorList(
+			fmt.Errorf("erorr when flattening module steps: %w", err))
+	}
+	if err := dumpExecutableSteps(ctx, steps); err != nil {
+		klog.Warningf("Error while dumping executable steps: %w", err)
+	}
+	klog.Info("Step dump complete. Exiting...")
+	os.Exit(0)
 
 	return Test.ExecuteTest(ctx, testConfig)
 }

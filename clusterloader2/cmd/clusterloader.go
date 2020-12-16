@@ -247,14 +247,15 @@ func main() {
 		klog.Exitf("Parsing flags error: %v", errList.String())
 	}
 
-	mclient, err := framework.NewMultiClientSet(clusterLoaderConfig.ClusterConfig.KubeConfigPath, 1)
-	if err != nil {
-		klog.Exitf("Client creation error: %v", err)
-	}
+	//mclient, err := framework.NewMultiClientSet(clusterLoaderConfig.ClusterConfig.KubeConfigPath, 1)
+	//if err != nil {
+	//	klog.Exitf("Client creation error: %v", err)
+	//}
 
-	if err = completeConfig(mclient); err != nil {
-		klog.Exitf("Config completing error: %v", err)
-	}
+	//if err = completeConfig(mclient); err != nil {
+	//	klog.Exitf("Config completing error: %v", err)
+	//}
+	clusterLoaderConfig.ClusterConfig.Nodes = 100
 
 	klog.V(0).Infof("Using config: %+v", clusterLoaderConfig)
 
@@ -262,21 +263,22 @@ func main() {
 		klog.Exitf("Cannot create report directory: %v", err)
 	}
 
-	if err = util.LogClusterNodes(mclient.GetClient()); err != nil {
-		klog.Errorf("Nodes info logging error: %v", err)
-	}
+	//if err = util.LogClusterNodes(mclient.GetClient()); err != nil {
+	//	klog.Errorf("Nodes info logging error: %v", err)
+	//}
+	//
+	//if err = verifyCluster(mclient.GetClient()); err != nil {
+	//	klog.Exitf("Cluster verification error: %v", err)
+	//}
 
-	if err = verifyCluster(mclient.GetClient()); err != nil {
-		klog.Exitf("Cluster verification error: %v", err)
-	}
-
-	f, err := framework.NewFramework(
-		&clusterLoaderConfig.ClusterConfig,
-		getClientsNumber(clusterLoaderConfig.ClusterConfig.Nodes),
-	)
-	if err != nil {
-		klog.Exitf("Framework creation error: %v", err)
-	}
+	//f, err := framework.NewFramework(
+	//	&clusterLoaderConfig.ClusterConfig,
+	//	getClientsNumber(clusterLoaderConfig.ClusterConfig.Nodes),
+	//)
+	//if err != nil {
+	//	klog.Exitf("Framework creation error: %v", err)
+	//}
+	var f *framework.Framework
 
 	var prometheusController *prometheus.Controller
 	var prometheusFramework *framework.Framework

@@ -19,10 +19,11 @@ package test
 import (
 	"fmt"
 	"io/ioutil"
-	"k8s.io/perf-tests/clusterloader2/pkg/measurement"
 	"path"
 	"strings"
 	"time"
+
+	"k8s.io/perf-tests/clusterloader2/pkg/measurement"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
